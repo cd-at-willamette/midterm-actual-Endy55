@@ -25,7 +25,10 @@ sh(library(tidyverse))
 sh(library(caret))
 sh(library(fastDummies))
 sh(library(class))
+sh(library(moderndive))
+sh(library(dslabs))
 sh(library(ISLR)) # for the "Auto" dataframe
+sh(library(pROC))
 ```
 
 # Dataframe
@@ -48,10 +51,21 @@ names(Auto)
 - Compute and comment on the RMSE.
 
 ```{r regression}
-# Your code here
+m1 = lm(mpg ~ horsepower + year, data = Auto)
+m2 = lm(mpg ~ horsepower, data = Auto)
+m3 = lm(mpg ~ year, data = Auto)
+m4 = lm(mpg ~ horsepower * year, data = Auto)
+
+
+get_regression_summaries(m1)
+get_regression_summaries(m2)
+get_regression_summaries(m3)
+get_regression_summaries(m4)
+
 ```
 
-> <span style="color:red;font-weight:bold">TODO</span>: *Explain*
+
+> <span style="color:red;font-weight:bold">TODO</span>: *The average difference between the predicted mpg of the model and actual mpg in the dataset is about 4.371. An error of 4.371 is not too bad in the context of predicting mileage. Individually, the errors increase. The interaction between year and horsepower yields even lower errors. You would expect year to be a good indicator of mileage as newer models may improve fuel efficiency. You may also expect high horsepower to predict mileage well as engines with high horsepower may require more fuel. There are also other factors at play that may not be apparent through these linear models alone.*
 
 # Feature Engineering
 
@@ -61,10 +75,37 @@ names(Auto)
 - Compute and comment on the RMSE.
 
 ```{r features}
-# Your code here
+autods = Auto %>%
+  mutate(chevrolet = str_detect(name, "chevrolet"),
+         bmw = str_detect(name, "bmw"),
+         ford = str_detect(name, "ford"),
+         plymouth = str_detect(name, "plymouth"),
+         pontiac = str_detect(name, "pontiac"),
+         chevy = str_detect(name, "chevy"),
+         toyota = str_detect(name, "toyota"),
+         subaru = str_detect(name, "subaru"),
+         honda = str_detect(name, "honda"),
+         mercedes = str_detect(name, "mercedes"))
+
+brandsonly = autods %>%
+  select(mpg, chevrolet, bmw, ford, plymouth, pontiac, chevy, toyota, subaru, honda, mercedes)
+
+brandsonly = na.omit(brandsonly)
+
 ```
 
-> <span style="color:red;font-weight:bold">TODO</span>: *Explain*
+```{r}
+automodel = lm(mpg ~ ., data = autods)
+automodel2 = lm(mpg ~ ., data = brandsonly)
+
+
+get_regression_summaries(automodel)
+get_regression_summaries(automodel2)
+
+```
+
+
+> <span style="color:red;font-weight:bold">TODO</span>: *Adding the engineered features greatly improved the model and the errors decreased. However, when all the other variables were removed, the model worsened and the error increased. While some brands may be known for their fuel efficient cars, not all models are made with that intention. Car manufacturers make a variety of car models to satisfy their customers and they vary in mileage. It is not a good idea to create a model to predict mpg based on the brand. We need to keep in mind the variables in our model and how they impact predictions when we remove other variables that they may depend on.*
 
 # Classification
 
@@ -73,10 +114,49 @@ names(Auto)
 - Report on your Kappa value.
 
 ```{r classification}
-# Your code here
+knn = autods %>%
+  select(honda, mpg, weight, horsepower, acceleration)
+
+knn = knn %>%
+  mutate(honda = as.factor(honda))
+
+auto = createDataPartition(knn$honda, p = 0.8, list = FALSE)
+train_knn = knn[auto, ]
+test_knn = knn[-auto, ]
+
+fit_knn = train(honda ~ .,
+                data = train_knn, 
+                method = "knn",
+                tuneLength = 15,
+                metric = "Kappa",
+                trControl = trainControl(method = "cv", number = 5))
+
+confusionMatrix(predict(fit_knn, test_knn),factor(test_knn$honda))
 ```
 
-> <span style="color:red;font-weight:bold">TODO</span>: *Explain*
+```{r}
+naive = knn %>% 
+  mutate(highmpg = mpg > mean(mpg),
+         highhp = horsepower > mean(horsepower),
+         heavy = weight > mean(weight),
+         fast = acceleration > mean(acceleration)) %>%
+  select(-mpg, -horsepower, -weight, -acceleration)
+
+autos = createDataPartition(naive$honda, p = 0.8, list = FALSE)
+train_naive = naive[autos, ]
+test_naive = naive[-autos, ]
+
+fit_naive = train(honda ~ .,
+                data = train_naive, 
+                method = "naive_bayes",
+                tuneLength = 15,
+                metric = "Kappa",
+                trControl = trainControl(method = "cv", number = 5))
+
+confusionMatrix(predict(fit_naive, test_naive),factor(test_naive$honda))
+```
+
+> <span style="color:red;font-weight:bold">TODO</span>: *The models created by Honda vary in mpg. They make good and reliable cars but the variables differ from model to model. I received a kappa of 0 using KNN as the cars were not very clustered together. This means that the model predicted and guessed by chance. When binned by the top mpg, weigh, acceleration and horsepower. The kappa increased, thus it is the better model between them both. However, it is still not very good. The binned variables don't cover all the cars made by Honda. They were not good predictors. The car specifications vary too much within Honda.*
 
 # Binary Classification
 
@@ -85,10 +165,39 @@ names(Auto)
 - Display and comment on an ROC curve.
 
 ```{r binary classification}
-# Your code here
+knn %>%
+  group_by(honda) %>%
+  summarize(truefalse = n())
+
+true = 379/13
+false = 1
 ```
 
-> <span style="color:red;font-weight:bold">TODO</span>: *Explain*
+```{r}
+train_knn2 = train_knn %>% 
+               mutate(weights=ifelse(honda=="TRUE", true, false))
+
+fit_weights = train(honda ~ .,
+                    data = train_knn2 %>% select(-weights), 
+                    method = "naive_bayes",
+                    tuneLength = 15,
+                    metric = "Kappa",
+                    trControl = trainControl(method = "cv", number = 5),
+                    weights = train_knn2$weights)
+
+confusionMatrix(predict(fit_weights, test_knn),factor(test_knn$honda))
+```
+
+```{r}
+prob = predict(fit_weights, newdata = test_knn, type = "prob")[,2]
+myRoc = roc(test_knn$honda, prob)
+plot(myRoc)
+auc(myRoc)
+```
+
+
+
+> <span style="color:red;font-weight:bold">TODO</span>: *Adding weights to our model drastically improved it. There are only 13 Honda models represented in this dataset. Honda models had a hard time being noticed by the model so adding more importance to them gave it better predicting power. The ROC is very good too. The area under the curve is in the high 90's meaning that the model predicted honda with high accuracy.*
 
 # Ethics
 
@@ -108,11 +217,24 @@ names(Auto)
 > <span style="color:red;font-weight:bold">TODO</span>: Democratic Institutions
 
 ```{r democracy}
-# Your code here
+autods %>%
+  group_by(year) %>%
+  summarize(averagempg = mean(mpg))
 ```
+
+> <span style="color:red;font-weight:bold">TODO</span>: *As years go on, car manufacturers have improved the fuel effiency on their cars. Consumers have grown more environment conscious due to several environmental events in the 1900s. The enactment of the Clean Air Act of 1970 has increased the standard of fuel effiency across car brands. Consumers are able to vote with their wallets as well as vote for legal reforms in the car industry. It is important to note the power of the people in democratic institutions.*
+
 
 > <span style="color:red;font-weight:bold">TODO</span>: Climate Change
 
 ```{r climate}
-# Your code here
+autods %>%
+  group_by(year) %>%
+  summarize(averagehp = mean(horsepower))
 ```
+
+> <span style="color:red;font-weight:bold">TODO</span>: *While horsepower isn't completely indicative of miles per gallon, the decreasing horsepower over the years has shown how more efficient cars are. As we grow more conscious about climate change, it is important that we realize how our lifestyles and rapid technology has contributed towards worsening climate change. However, as data scientists, we must examine and realize the varying factors that contribute to that. Much of the climate change is due to big companies and corporations which the average consumer pales in comparison to. Knowing that, we can put the data into context better and work towards solutions*
+
+
+
+
